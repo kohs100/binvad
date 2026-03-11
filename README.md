@@ -69,7 +69,7 @@ ffmpeg -i input.mp3 -f s16le -acodec pcm_s16le -ac 1 -ar 16000 - \
 ### Options
 
 - `--model`: Silero VAD ONNX 모델 경로 (기본값: `silero_vad.onnx`)
-- `--format`: `csv` 또는 `jsonl`
+- `--format`: `csv` 또는 `jsonl` 또는 `raw`
 - `--speech-prob-thres`: speech 판정 확률 기준값
 - `--min-interval-sec`: chunk 분리를 위한 최소 non-speech 구간 길이
 - `--grace-sec`: chunk 앞/뒤로 추가할 시간(초)
@@ -79,3 +79,17 @@ ffmpeg -i input.mp3 -f s16le -acodec pcm_s16le -ac 1 -ar 16000 - \
 
 - `csv`: 헤더 포함 `start_sec,end_sec`
 - `jsonl`: 줄 단위 JSON (`{"start_sec":...,"end_sec":...}`)
+- `raw`: 줄 단위 공백 구분 (`<start_sec> <end_sec>`)
+
+## E2E 청킹 스크립트 (stream copy)
+
+`raw` 출력을 사용해 즉시 ffmpeg `-c copy` 청크를 생성합니다.
+
+```bash
+./scripts/e2e_vad_chunk_copy.sh input.mp4 silero_vad.onnx chunks ./build/binvad
+```
+
+출력:
+
+- 각 청크를 `chunks/chunk_0000.mka` 형태로 생성
+- 표준출력에 `output_path,start_sec,end_sec` 로그 출력

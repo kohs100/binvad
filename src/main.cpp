@@ -10,6 +10,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -18,7 +19,7 @@ namespace {
 
 struct Args {
   std::string model_path = "silero_vad.onnx";
-  std::string format = "csv";  // csv|jsonl
+  std::string format = "csv";  // csv|jsonl|raw
   float speech_prob_thres = 0.5f;
   double min_interval_sec = 0.3;
   double grace_sec = 0.05;
@@ -29,6 +30,21 @@ struct Segment {
   double start_sec;
   double end_sec;
 };
+
+std::string FormatRawTs(double v) {
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(6);
+  oss << v;
+  std::string s = oss.str();
+  if (!s.empty() && s[0] == '.') {
+    return "0" + s;
+  }
+  if (s.size() > 1 && s[0] == '-' && s[1] == '.') {
+    return "-0" + s.substr(1);
+  }
+  return s;
+}
 
 [[noreturn]] void Die(const std::string& msg) {
   throw std::runtime_error(msg);
@@ -53,8 +69,8 @@ Args ParseArgs(int argc, char** argv) {
       args.model_path = take_value(token);
     } else if (token == "--format") {
       args.format = take_value(token);
-      if (args.format != "csv" && args.format != "jsonl") {
-        Die("--format must be csv or jsonl");
+      if (args.format != "csv" && args.format != "jsonl" && args.format != "raw") {
+        Die("--format must be csv, jsonl, or raw");
       }
     } else if (token == "--speech-prob-thres") {
       args.speech_prob_thres = std::stof(take_value(token));
@@ -68,7 +84,7 @@ Args ParseArgs(int argc, char** argv) {
       std::cout
           << "Usage: binvad [options]\n"
           << "  --model PATH                 Silero VAD ONNX path (default: silero_vad.onnx)\n"
-          << "  --format csv|jsonl           Output format (default: csv)\n"
+          << "  --format csv|jsonl|raw       Output format (default: csv)\n"
           << "  --speech-prob-thres FLOAT    VAD probability threshold (default: 0.5)\n"
           << "  --min-interval-sec FLOAT     Minimum non-speech gap to split chunks\n"
           << "  --grace-sec FLOAT            Padding added before/after each chunk\n"
@@ -353,6 +369,13 @@ void FinalizeSegments(std::vector<Segment>* segments, double total_sec, const Ar
     seg.end_sec = std::min(total_sec, seg.end_sec + args.grace_sec);
   }
 
+  std::sort(raw.begin(), raw.end(), [](const Segment& a, const Segment& b) {
+    if (a.start_sec != b.start_sec) {
+      return a.start_sec < b.start_sec;
+    }
+    return a.end_sec < b.end_sec;
+  });
+
   std::vector<Segment> merged;
   merged.reserve(raw.size());
   for (const auto& seg : raw) {
@@ -489,6 +512,13 @@ void PrintSegments(const std::vector<Segment>& segs, const std::string& format) 
     std::cout << "start_sec,end_sec\n";
     for (const auto& s : segs) {
       std::cout << s.start_sec << ',' << s.end_sec << '\n';
+    }
+    return;
+  }
+
+  if (format == "raw") {
+    for (const auto& s : segs) {
+      std::cout << FormatRawTs(s.start_sec) << ' ' << FormatRawTs(s.end_sec) << '\n';
     }
     return;
   }
