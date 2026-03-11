@@ -1,0 +1,5 @@
+.conda
+third_party/onnxruntime*
+silero_vad.onnx
+source.webm
+build
