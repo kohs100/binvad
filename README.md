@@ -5,8 +5,8 @@
 
 ## Silero VAD ONNX model 다운로드
 ```bash
-$ wget https://huggingface.co/onnx-community/silero-vad/resolve/main/onnx/model.onnx
-$ mv model.onnx silero_vad.onnx
+$ wget https://github.com/snakers4/silero-vad/blob/master/src/silero_vad/data/silero_vad.onnx
+$ mv model.onnx silero_vad_v6.2.onnx
 ```
 
 ## ONNX Runtime prebuilt 설치 + 빌드
@@ -68,7 +68,7 @@ ffmpeg -i input.mp3 -f s16le -acodec pcm_s16le -ac 1 -ar 16000 - \
 
 ### Options
 
-- `--model`: Silero VAD ONNX 모델 경로 (기본값: `silero_vad.onnx`)
+- `--model`: Silero VAD ONNX 모델 경로 (기본값: `silero_vad_v6.2.onnx`)
 - `--format`: `csv` 또는 `jsonl` 또는 `raw`
 - `--speech-prob-thres`: speech 판정 확률 기준값
 - `--min-interval-sec`: chunk 분리를 위한 최소 non-speech 구간 길이
@@ -86,7 +86,7 @@ ffmpeg -i input.mp3 -f s16le -acodec pcm_s16le -ac 1 -ar 16000 - \
 `raw` 출력을 사용해 즉시 ffmpeg `-c copy` 청크를 생성합니다.
 
 ```bash
-./scripts/e2e_vad_chunk_copy.sh input.mp4 silero_vad.onnx chunks ./build/binvad
+./scripts/e2e_vad_chunk_copy.sh input.mp4 silero_vad_v6.2.onnx chunks ./build/binvad
 ```
 
 출력:

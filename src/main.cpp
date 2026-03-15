@@ -18,7 +18,7 @@
 namespace {
 
 struct Args {
-  std::string model_path = "silero_vad.onnx";
+  std::string model_path = "silero_vad_v6.2.onnx";
   std::string format = "csv";  // csv|jsonl|raw
   float speech_prob_thres = 0.5f;
   double min_interval_sec = 0.3;
@@ -138,6 +138,14 @@ class SileroVadRunner {
       Die("internal error: frame size mismatch");
     }
 
+    // 1. Context와 현재 frame 병합
+    std::vector<float> model_input(context_size_ + frame_samples_);
+    std::memcpy(model_input.data(), context_.data(), context_size_ * sizeof(float));
+    std::memcpy(model_input.data() + context_size_, frame.data(), frame_samples_ * sizeof(float));
+
+    // 2. 다음 Inference를 위해 현재 frame의 마지막 context_size_ 만큼을 context_ 버퍼에 저장
+    std::memcpy(context_.data(), frame.data() + frame_samples_ - context_size_, context_size_ * sizeof(float));
+
     Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
     std::vector<const char*> input_names_c;
@@ -148,9 +156,10 @@ class SileroVadRunner {
     for (const auto& name : input_names_) {
       input_names_c.push_back(name.c_str());
       if (name == audio_input_name_) {
-        std::vector<int64_t> shape{1, frame_samples_};
+        // 병합된 [1, 576] 사이즈의 input tensor 주입
+        std::vector<int64_t> shape{1, context_size_ + frame_samples_};
         input_values.push_back(Ort::Value::CreateTensor<float>(
-            mem_info, const_cast<float*>(frame.data()), frame.size(), shape.data(), shape.size()));
+            mem_info, model_input.data(), model_input.size(), shape.data(), shape.size()));
       } else if (!sr_input_name_.empty() && name == sr_input_name_) {
         std::vector<int64_t> shape{1};
         input_values.push_back(Ort::Value::CreateTensor<int64_t>(
@@ -182,7 +191,17 @@ class SileroVadRunner {
     return prob;
   }
 
+  // 스트림이 변경되거나 초기화가 필요할 때 호출
+  void Reset() {
+    InitState();
+  }
+
  private:
+  void Die(const std::string& msg) {
+    std::cerr << "Fatal Error: " << msg << std::endl;
+    std::exit(EXIT_FAILURE);
+  }
+
   void InitMetadata() {
     Ort::AllocatorWithDefaultOptions allocator;
 
@@ -219,9 +238,6 @@ class SileroVadRunner {
         sr_input_name_ = name;
       } else {
         audio_input_name_ = name;
-        if (shape.size() >= 2 && shape[1] > 0) {
-          frame_samples_ = shape[1];
-        }
       }
     }
 
@@ -229,9 +245,9 @@ class SileroVadRunner {
       Die("unable to locate audio input tensor");
     }
 
-    if (frame_samples_ <= 0) {
-      frame_samples_ = 512;
-    }
+    // ONNX 모델의 동적 shape(-1)에 의존하지 않고 명시적으로 512 frame 유지
+    context_size_ = (sample_rate_ == 16000) ? 64 : 32;
+    frame_samples_ = (sample_rate_ == 16000) ? 512 : 256;
 
     if (state_shape_.empty() && !state_input_name_.empty()) {
       state_shape_ = {2, 1, 128};
@@ -251,6 +267,10 @@ class SileroVadRunner {
   }
 
   void InitState() {
+    // Context 버퍼 초기화 (초기값 0.0f 할당)
+    context_size_ = (sample_rate_ == 16000) ? 64 : 32;
+    context_.assign(context_size_, 0.0f);
+
     if (state_input_name_.empty()) {
       return;
     }
@@ -259,8 +279,6 @@ class SileroVadRunner {
       state_shape_ = {2, 1, 128};
     }
 
-    // Silero VAD state is typically [2, batch, 128]. Some exports mark one
-    // or more dims as dynamic (-1), so we fill sensible defaults.
     for (size_t i = 0; i < state_shape_.size(); ++i) {
       if (state_shape_[i] > 0) {
         continue;
@@ -303,7 +321,6 @@ class SileroVadRunner {
       }
 
       const float* p = out.GetTensorData<float>();
-      // Prefer scalar/1-element outputs. Otherwise fallback to first float in any output.
       if (n == 1) {
         return p[0];
       }
@@ -357,6 +374,9 @@ class SileroVadRunner {
 
   int64_t sample_rate_ = 16000;
   int64_t frame_samples_ = 512;
+  int64_t context_size_ = 64;  // v5/v6를 위한 context buffer 사이즈 추가
+
+  std::vector<float> context_; // 이전 프레임의 마지막 샘플들을 저장하는 버퍼
 
   std::vector<int64_t> state_shape_;
   std::vector<float> state_;
@@ -507,6 +527,11 @@ std::vector<Segment> DetectSegmentsFromStdin(SileroVadRunner* vad, const Args& a
 void PrintSegments(const std::vector<Segment>& segs, const std::string& format) {
   std::cout.setf(std::ios::fixed);
   std::cout.precision(6);
+
+  if (segs.empty()) {
+    std::cerr << "Empty segment!!\n";
+    return;
+  }
 
   if (format == "csv") {
     std::cout << "start_sec,end_sec\n";
